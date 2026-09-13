@@ -1149,9 +1149,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         self._direct_model_requests: bool = _coerce_request_bool(
             extra.get("direct_model_requests"), default=False)
         x402_config = extra.get("x402_payments") if isinstance(extra.get("x402_payments"), dict) else {}
-        self._x402_payments_enabled: bool = _coerce_request_bool(
-            x402_config.get("enabled"), default=False
-        )
+        x402_enabled = os.getenv("HERMES_X402_PAYMENTS_ENABLED")
+        if x402_enabled is None:
+            x402_enabled = x402_config.get("enabled")
+        self._x402_payments_enabled: bool = _coerce_request_bool(x402_enabled, default=False)
         self._app: Optional["web.Application"] = None
         self._runner: Optional["web.AppRunner"] = None
         self._site: Optional["web.TCPSite"] = None

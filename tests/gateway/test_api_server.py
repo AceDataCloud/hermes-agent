@@ -2962,6 +2962,33 @@ class TestRequestRelayMetadata:
 
 
 # ---------------------------------------------------------------------------
+# x402 payment feature gate
+# ---------------------------------------------------------------------------
+
+
+def test_x402_payment_env_enables_feature(monkeypatch):
+    monkeypatch.setenv("HERMES_X402_PAYMENTS_ENABLED", "true")
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={}))
+    assert adapter._x402_payments_enabled is True
+
+
+def test_x402_payment_env_false_overrides_config(monkeypatch):
+    monkeypatch.setenv("HERMES_X402_PAYMENTS_ENABLED", "false")
+    adapter = APIServerAdapter(
+        PlatformConfig(enabled=True, extra={"x402_payments": {"enabled": True}})
+    )
+    assert adapter._x402_payments_enabled is False
+
+
+def test_x402_payment_config_used_without_env(monkeypatch):
+    monkeypatch.delenv("HERMES_X402_PAYMENTS_ENABLED", raising=False)
+    adapter = APIServerAdapter(
+        PlatformConfig(enabled=True, extra={"x402_payments": {"enabled": True}})
+    )
+    assert adapter._x402_payments_enabled is True
+
+
+# ---------------------------------------------------------------------------
 # Bare-model opt-in gate (direct_model_requests) for _request_agent_overrides
 # ---------------------------------------------------------------------------
 

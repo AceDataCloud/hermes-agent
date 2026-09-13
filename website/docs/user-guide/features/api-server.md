@@ -705,7 +705,7 @@ gateway:
 
 ### Experimental MCP payment challenge/resume
 
-`gateway.api_server.x402_payments.enabled` is off by default. When enabled, `/v1/runs` can pause on a strict x402 V2 MCP `PaymentRequired` Tool Result, emit a credential-free `payment.required` event, and accept the matching `PaymentPayload` at `POST /v1/runs/{run_id}/payment-credentials`. The callback uses the API server bearer authentication and retries only the original Tool name and arguments; credentials never enter model-visible messages or SSE.
+`gateway.api_server.x402_payments.enabled` is off by default. `HERMES_X402_PAYMENTS_ENABLED` can explicitly override it for managed deployments. When enabled, `/v1/runs` can pause on a strict x402 V2 MCP `PaymentRequired` Tool Result, emit a credential-free `payment.required` event, and accept the matching `PaymentPayload` at `POST /v1/runs/{run_id}/payment-credentials`. The callback uses the API server bearer authentication and retries only the original Tool name and arguments; credentials never enter model-visible messages or SSE.
 
 This surface is for mock/testnet interoperability. Hermes does not verify or settle funds, and enabling it does not make an MCP server or media workflow safe for real-money use.
 
