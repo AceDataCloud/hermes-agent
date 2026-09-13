@@ -120,7 +120,7 @@ class TestApprovalCommandWiring:
         from gateway.platforms import api_server_runs
 
         self._assert_redacts_then_uses(
-            api_server_runs, "_approval_notify", "put_nowait"
+            api_server_runs, "_approval_notify", "_publish_run_event"
         )
 
 
