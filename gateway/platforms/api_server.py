@@ -3782,14 +3782,25 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     # -- /v1/runs, room grants, room dispatch: thin delegators (real methods: tests assert
     # __dict__ membership and patch the module-level implementations) ---------------------
 
-    _RUN_STREAM_TTL = 300  # seconds before orphaned runs are swept
+    _RUN_STREAM_TTL = 300  # seconds to retain replay after a terminal event
+    _RUN_ACTIVE_STREAM_TTL = 3600  # absolute cap for an unclosed transport
     _RUN_STATUS_TTL = 3600  # seconds to retain terminal run status for polling
+    _RUN_EVENT_CONTRACT = _api_runs.RUN_EVENT_CONTRACT
 
     def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, Any]:
         return _api_runs._set_run_status(self, run_id, status, **fields)
 
     def _make_run_event_callback(self, run_id: str, loop: "asyncio.AbstractEventLoop"):
-        return _api_runs._make_run_event_callback(self, run_id, loop, _api_server=sys.modules[__name__])
+        return _api_runs._make_run_event_callbacks(
+            self, run_id, loop, workspace_task_id=run_id, _api_server=sys.modules[__name__]
+        )[0]
+
+    def _publish_run_event(self, run_id: str, event: Dict[str, Any], *, expected_stream=None):
+        return _api_runs._publish_run_event(self, run_id, event, expected_stream=expected_stream)
+
+    @staticmethod
+    def _run_workspace_root(task_id: str) -> Optional[str]:
+        return _api_runs._run_workspace_root(task_id)
 
     def _run_idempotency_scope(self, request: "web.Request") -> str:
         return _api_runs._run_idempotency_scope(self, request, _api_server=sys.modules[__name__])

@@ -24,9 +24,12 @@ except ImportError:
 
 from gateway.platforms.api_server_room_grants import _json_error, _room_grant_error_response
 from gateway.platforms.api_server_run_idempotency import TERMINAL_STATUSES
+from acedata_runtime.observations import project_tool_complete, project_tool_start
+from acedata_runtime.run_events import CursorGap, RunEventBuffer
 
 
 logger = logging.getLogger("gateway.platforms.api_server")
+RUN_EVENT_CONTRACT = {"version": 2, "replay": True, "public_observation_version": 1}
 _ROOM_RETENTION_REQUEST_KEY = (
     RequestKey("hermes.room_run_retention_until", float) if RequestKey is not None
     else "hermes.room_run_retention_until")
@@ -92,7 +95,7 @@ def _initialize_run_state(self, *, store_factory) -> None:
     # outlive the request, hence the separate stopping set), pollable statuses, and
     # approval session keys (approval core resolves by session key, clients by run_id).
     self._run_idempotency_ids: set[str] = set()
-    self._run_stream_subscribers: set[str] = set()
+    self._run_stream_subscribers: Dict[str, int] = {}
     self._stopping_run_ids: set[str] = set()
     (
         self._run_owners, self._run_streams, self._run_streams_created, self._active_run_agents,
@@ -129,10 +132,17 @@ def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, 
     """Update pollable run status without exposing private agent objects."""
     now = time.time()
     current = self._run_statuses.get(run_id, {})
+    if current.get("event_stream_complete"):
+        return current
     previous_status = str(current.get("status") or "")
     field_names = set(fields)
-    current.update({"object": "hermes.run", "run_id": run_id, "status": status, "updated_at": now})
+    current.update({
+        "object": "hermes.run", "run_id": run_id, "status": status, "updated_at": now,
+        "event_contract": dict(RUN_EVENT_CONTRACT),
+    })
     current.setdefault("created_at", fields.pop("created_at", now))
+    current.setdefault("last_event_id", 0)
+    current.setdefault("event_stream_complete", False)
     current.update(fields)
     if status != "waiting_for_approval":
         current.pop("approval", None)
@@ -151,37 +161,95 @@ def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, 
     return current
 
 
-def _make_run_event_callback(self, run_id: str, loop: "asyncio.AbstractEventLoop", *, _api_server):
-    """Return a callback that pushes structured events to the run SSE queue."""
+def _publish_run_event(
+    self, run_id: str, event: Dict[str, Any], *, expected_stream: Optional[RunEventBuffer] = None
+) -> Optional[int]:
+    """Append an event and project its replay cursor into the run status."""
+    terminal_status = {
+        "run.completed": "completed", "run.failed": "failed", "run.cancelled": "cancelled"
+    }.get(event.get("event"))
+    stream = self._run_streams.get(run_id)
+    if expected_stream is not None and stream is not expected_stream:
+        return None
+    status_fields: Dict[str, Any] = {"last_event": event.get("event")}
+    if event.get("event") == "run.completed":
+        status_fields.update(output=event.get("output", ""), usage=event.get("usage"))
+    elif event.get("event") == "run.failed":
+        status_fields["error"] = event.get("error", "Run failed.")
+    if stream is None:
+        current = self._run_statuses.get(run_id, {})
+        status_fields.update(last_event_id=current.get("last_event_id", 0), event_stream_complete=False)
+        self._set_run_status(
+            run_id, terminal_status or current.get("status", "running"), **status_fields
+        )
+        return None
+    if stream.closed:
+        return stream.last_event_id if terminal_status else None
+    event_id = stream.publish(event, terminal=terminal_status is not None)
+    status_fields.update(last_event_id=event_id, event_stream_complete=terminal_status is not None)
+    self._set_run_status(
+        run_id, terminal_status or self._run_statuses.get(run_id, {}).get("status", "running"),
+        **status_fields,
+    )
+    return event_id
+
+
+def _run_workspace_root(task_id: str) -> Optional[str]:
+    try:
+        from tools.file_tools import _authoritative_workspace_root
+        return _authoritative_workspace_root(task_id)
+    except Exception:
+        return None
+
+
+def _make_run_event_callbacks(self, run_id: str, loop: "asyncio.AbstractEventLoop", *, workspace_task_id: str, _api_server):
+    """Return redacted lifecycle and exact tool callbacks for the public stream."""
     redact_sensitive_text = _api_server.redact_sensitive_text
+    started_at: Dict[str, float] = {}
 
     def _push(event: Dict[str, Any]) -> None:
-        self._set_run_status(
-            run_id, self._run_statuses.get(run_id, {}).get("status", "running"), last_event=event.get("event"))
-        q = self._run_streams.get(run_id)
-        if q is not None:
-            with suppress(Exception):
-                loop.call_soon_threadsafe(q.put_nowait, event)
+        stream = self._run_streams.get(run_id)
+        if stream is None:
+            return
+        def publish() -> None:
+            _publish_run_event(self, run_id, event, expected_stream=stream)
+        with suppress(Exception):
+            loop.call_soon_threadsafe(publish)
 
-    def _callback(event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs):
-        # _thinking / subagent.tool / subagent_progress are deliberately dropped (UI noise);
-        # lifecycle boundaries must land so clients can observe delegate_task failures.
-        fields = _FIXED_EVENT_FIELDS.get(event_type)
-        if fields is not None:
-            _push(_run_event(run_id, event_type, **fields(tool_name, preview, kwargs)))
-        elif event_type in {"subagent.start", "subagent.complete"}:
+    def lifecycle(event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs):
+        if event_type in {"subagent.start", "subagent.complete"}:
             event = _run_event(run_id, event_type)
             if preview is not None:
                 event["preview"] = redact_sensitive_text(str(preview), force=True)
             for key in _SUBAGENT_EVENT_KEYS:
                 value = kwargs.get(key)
                 if value is not None:
-                    # Free text may carry child tool output: force secret redaction on this public stream.
                     redact = key in _SUBAGENT_TEXT_KEYS and isinstance(value, str)
                     event[key] = redact_sensitive_text(value, force=True) if redact else value
             _push(event)
 
-    return _callback
+    def tool_start(call_id: str, name: str, args: Any) -> None:
+        projected = project_tool_start(call_id, name, args, workspace_root=_run_workspace_root(workspace_task_id))
+        if projected is not None:
+            started_at[call_id] = time.monotonic()
+            _push(_run_event(run_id, "tool.started", **projected))
+
+    def tool_complete(call_id: str, name: str, args: Any, result: Any) -> None:
+        started = started_at.pop(call_id, None)
+        duration_ms = max(0, round((time.monotonic() - started) * 1000)) if started is not None else None
+        try:
+            from agent.display import _detect_tool_failure
+            is_error, _ = _detect_tool_failure(name, result)
+        except Exception:
+            is_error = isinstance(result, dict) and bool(result.get("error") or result.get("is_error"))
+        projected = project_tool_complete(
+            call_id, name, args, result, duration_ms=duration_ms, is_error=is_error,
+            workspace_root=_run_workspace_root(workspace_task_id),
+        )
+        if projected is not None:
+            _push(_run_event(run_id, "tool.completed", **projected))
+
+    return lifecycle, tool_start, tool_complete
 
 
 def _room_permission_for(request: "web.Request") -> str:
@@ -298,7 +366,8 @@ def _accepted_response(run_id: str, status: str, gateway_session_key, *, replaye
     if gateway_session_key:
         headers["X-Hermes-Session-Key"] = gateway_session_key
     return web.json_response(
-        {"run_id": run_id, "status": status, "replayed": replayed}, status=202, headers=headers)
+        {"run_id": run_id, "status": status, "replayed": replayed,
+         "event_contract": dict(RUN_EVENT_CONTRACT)}, status=202, headers=headers)
 
 
 def _replay_or_conflict(self, request, outcome, record, gateway_session_key, _openai_error) -> "web.Response":
@@ -319,7 +388,7 @@ class _RunLaunch:
 
     owner: Any
     run_id: str
-    queue: "asyncio.Queue[Optional[Dict]]"
+    queue: RunEventBuffer
     session_id: str
     gateway_session_key: Optional[str]
     declared_selected: bool
@@ -343,9 +412,9 @@ class _RunLaunch:
         return self.run_id
 
     def put_event(self, event: Optional[Dict]) -> None:
-        """Enqueue only while this run still owns live transport state."""
-        if self.owner._run_streams.get(self.run_id) is self.queue:
-            self.queue.put_nowait(event)
+        """Publish only while this run still owns live transport state."""
+        if event is not None and self.owner._run_streams.get(self.run_id) is self.queue:
+            _publish_run_event(self.owner, self.run_id, event, expected_stream=self.queue)
 
 
 def _forget_run(self, run_id: str, *tables) -> None:
@@ -488,7 +557,7 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
     session_history_delivery = not previous_response_id and not conversation_history
     if not conversation_history and selected_session_id and not previous_response_id:
         conversation_history = await self._conversation_history_for_session(str(selected_session_id))
-    q = self._run_streams[run_id] = asyncio.Queue()
+    q = self._run_streams[run_id] = RunEventBuffer()
     created_at = self._run_streams_created[run_id] = time.time()
     self._run_approval_sessions[run_id] = run_id  # approval session key (see _RunLaunch)
     initial_status = self._set_run_status(
@@ -623,7 +692,7 @@ def _make_payment_notify(self, run: _RunLaunch, loop: "asyncio.AbstractEventLoop
         self._set_run_status(
             run_id, "waiting_for_payment", last_event="payment.required", payments=payments
         )
-        q.put_nowait(event)
+        _publish_run_event(self, run_id, event, expected_stream=q)
 
     def _payment_notify(payment_data: Dict[str, Any]) -> None:
         loop.call_soon_threadsafe(_publish, dict(payment_data or {}))
@@ -650,7 +719,7 @@ def _make_approval_notify(self, run: _RunLaunch, *, _api_server) -> Callable[[Di
             allow_permanent=event.get("allow_permanent") is not False)))
         self._set_run_status(run_id, "waiting_for_approval", last_event="approval.request", approval=event)
         with suppress(Exception):
-            loop.call_soon_threadsafe(q.put_nowait, event)
+            loop.call_soon_threadsafe(_publish_run_event, self, run_id, event, expected_stream=q)
 
     return _approval_notify
 
@@ -678,9 +747,13 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
         if run_id in self._stopping_run_ids:
             _finish("cancelled")
             return
+        lifecycle_cb, tool_start_cb, tool_complete_cb = _make_run_event_callbacks(
+            self, run_id, loop, workspace_task_id=run.session_id or run_id, _api_server=_api_server
+        )
         with self._profile_scope(run.request_profile):
             agent = self._create_agent(
-                stream_delta_callback=_text_cb, tool_progress_callback=self._make_run_event_callback(run_id, loop),
+                stream_delta_callback=_text_cb, tool_progress_callback=lifecycle_cb,
+                tool_start_callback=tool_start_cb, tool_complete_callback=tool_complete_cb,
                 **run.agent_kwargs)
         self._active_run_agents[run_id] = agent
         approval_notify = _make_approval_notify(self, run, _api_server=_api_server)
@@ -714,8 +787,6 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
         # On cancellation (/stop) the executor thread may still block on an approval
         # Event; unregistering releases it. Idempotent on normal completion.
         _unregister_approval_notify(run.approval_session_key)
-        with suppress(Exception):
-            run.put_event(None)  # sentinel: close the SSE stream
         _retire_live_run(self, run_id)
 
 
@@ -778,55 +849,75 @@ async def _handle_get_run(self, request: "web.Request", *, _api_server) -> "web.
 
 
 async def _handle_run_events(self, request: "web.Request", *, _api_server) -> "web.StreamResponse":
-    """GET /v1/runs/{run_id}/events — stream structured agent lifecycle events."""
+    """Replay structured run events after the caller's durable SSE cursor."""
     auth_err = self._check_auth(request)
     if auth_err:
         return auth_err
     run_id = request.match_info["run_id"]
     if not self._request_owns_run(request, run_id):
         return _run_not_found(_api_server._openai_error, run_id)
-    # Allow subscribing slightly before the run is registered (race window).
-    # Confirm the force-kill actually reaped the process before we clear its PID file / scoped locks.
-    # SIGKILL can fail to take (e.g. an uninterruptible-sleep or zombie-reaping parent), and if we blindly
-    # clear the metadata and start a fresh instance we end up with two live gateways fighting over the same
-    # token — the duplicate-gateway failure in #19471.
     for _ in range(20):
         if run_id in self._run_streams:
             break
         await asyncio.sleep(0.05)
     else:
-        return _run_not_found(_api_server._openai_error, run_id)
-    q = self._run_streams[run_id]
-    self._run_stream_subscribers.add(run_id)
+        status = self._run_statuses.get(run_id)
+        if status is None:
+            return _run_not_found(_api_server._openai_error, run_id)
+        last_event_id = int(status.get("last_event_id", 0) or 0)
+        return web.json_response({
+            "error": {"message": "Requested event history is no longer retained",
+                      "type": "event_cursor_gap", "code": "event_cursor_gap"},
+            "first_event_id": last_event_id + 1, "last_event_id": last_event_id, "partial": True,
+        }, status=409)
+    raw_cursor = request.headers.get("Last-Event-ID", "0")
+    if not raw_cursor.isdigit():
+        return _json_error(_api_server._openai_error, "Last-Event-ID must be a non-negative integer",
+                           code="invalid_event_cursor", status=400)
+    cursor = int(raw_cursor)
+    stream = self._run_streams[run_id]
+    try:
+        stream.after(cursor)
+    except CursorGap:
+        return web.json_response({
+            "error": {"message": "Requested event history is no longer retained",
+                      "type": "event_cursor_gap", "code": "event_cursor_gap"},
+            "first_event_id": stream.first_event_id, "last_event_id": stream.last_event_id, "partial": True,
+        }, status=409)
     response = web.StreamResponse(status=200, headers={
-        "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        "Content-Type": "text/event-stream", "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no", "X-Hermes-Event-Contract": "2"})
     await response.prepare(request)
+    self._run_stream_subscribers[run_id] = self._run_stream_subscribers.get(run_id, 0) + 1
     try:
         while True:
             try:
-                event = await asyncio.wait_for(q.get(), timeout=30.0)
+                frames, closed = await stream.wait_after(cursor, timeout=30.0)
             except asyncio.TimeoutError:
                 await response.write(b": keepalive\n\n")
                 continue
-            if event is None:  # run finished
+            for frame in frames:
+                payload = json.dumps(frame.payload, separators=(",", ":"), ensure_ascii=False)
+                await response.write(f"id: {frame.event_id}\ndata: {payload}\n\n".encode())
+                cursor = frame.event_id
+            if closed and cursor >= stream.last_event_id:
                 await response.write(b": stream closed\n\n")
                 break
-            await response.write(_api_server._sse_frame(event))
     except Exception as exc:
         logger.debug("[api_server] SSE stream error for run %s: %s", run_id, exc)
     finally:
-        self._run_stream_subscribers.discard(run_id)
-        _drop_run_transport(self, run_id)
+        subscribers = self._run_stream_subscribers.get(run_id, 0) - 1
+        if subscribers > 0:
+            self._run_stream_subscribers[run_id] = subscribers
+        else:
+            self._run_stream_subscribers.pop(run_id, None)
     return response
 
 
 def _mark_run_event(self, run_id: str, name: str, **fields: Any) -> None:
-    """Record a control-plane event on the run status and (best effort) its SSE stream."""
-    self._set_run_status(run_id, "running", last_event=name)
-    q = self._run_streams.get(run_id)
-    if q is not None:
-        with suppress(Exception):
-            q.put_nowait(_run_event(run_id, name, **fields))
+    """Record a control-plane event on the run status and replay stream."""
+    self._set_run_status(run_id, "running")
+    _publish_run_event(self, run_id, _run_event(run_id, name, **fields))
 
 
 async def _handle_run_payment_credential(self, request: "web.Request", *, _api_server) -> "web.Response":
@@ -861,9 +952,9 @@ async def _handle_run_payment_credential(self, request: "web.Request", *, _api_s
         payments.pop(tool_call_id, None)
         next_status = "waiting_for_payment" if payments else "running"
         self._set_run_status(run_id, next_status, last_event="payment.responded", payments=payments)
-        q = self._run_streams.get(run_id)
-        if q is not None:
-            q.put_nowait(_run_event(run_id, "payment.responded", tool_call_id=tool_call_id, state=state))
+        _publish_run_event(
+            self, run_id, _run_event(run_id, "payment.responded", tool_call_id=tool_call_id, state=state)
+        )
     return web.json_response({
         "object": "hermes.run.payment_response",
         "run_id": run_id,
@@ -998,11 +1089,20 @@ def _sweep_orphaned_runs_once(self, now: Optional[float] = None) -> None:
     if now is None:
         now = time.time()
     for run_id, created_at in list(self._run_streams_created.items()):
-        if now - created_at <= self._RUN_STREAM_TTL or run_id in self._run_stream_subscribers:
+        stream = self._run_streams.get(run_id)
+        if stream is None:
+            continue
+        terminal_expired = (
+            stream.closed_at is not None and now - stream.closed_at > self._RUN_STREAM_TTL
+            and run_id not in self._run_stream_subscribers
+        )
+        active_expired = not stream.closed and now - created_at > self._RUN_ACTIVE_STREAM_TTL
+        if not (terminal_expired or active_expired):
             continue
         logger.debug("[api_server] sweeping expired run transport %s", run_id)
+        if not stream.closed:
+            stream.expire()
         task = self._active_run_tasks.get(run_id)
-        # Transport TTL bounds buffering; live control state survives until the task returns.
         _drop_run_transport(self, run_id)
         if task is None or task.done():
             _unregister_approval_notify(self._run_approval_sessions.get(run_id))

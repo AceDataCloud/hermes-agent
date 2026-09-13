@@ -26,6 +26,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from acedata_runtime.run_events import RunEventBuffer
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.api_server import (
     APIServerAdapter,
@@ -727,8 +728,8 @@ class TestRunEventCallback:
         correlate the child's session."""
         run_id = "run_subagent_redact"
         loop = asyncio.get_running_loop()
-        queue = asyncio.Queue()
-        adapter._run_streams[run_id] = queue
+        stream = RunEventBuffer()
+        adapter._run_streams[run_id] = stream
         adapter._run_statuses.pop(run_id, None)
 
         callback = adapter._make_run_event_callback(run_id, loop)
@@ -744,7 +745,12 @@ class TestRunEventCallback:
             output_tail=f"env shows {secret}",
         )
 
-        event = await asyncio.wait_for(queue.get(), timeout=1.0)
+        for _ in range(100):
+            if stream.frames:
+                break
+            await asyncio.sleep(0.01)
+        assert len(stream.frames) == 1
+        event = stream.frames[0].payload
         assert event["child_session_id"] == "child-sess-42"
         for field in ("preview", "goal", "summary", "output_tail"):
             assert secret not in event[field], field

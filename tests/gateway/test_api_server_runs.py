@@ -20,6 +20,8 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from gateway.config import PlatformConfig
+from acedata_runtime.run_events import RunEventBuffer
+
 from gateway.platforms.api_server import (
     APIServerAdapter,
     _api_request_profile,
@@ -527,7 +529,7 @@ class TestSteerRun:
         app = _create_runs_app(adapter)
         agent = MagicMock()
         agent.steer.return_value = True
-        queue = asyncio.Queue()
+        queue = RunEventBuffer()
         adapter._active_run_agents["run_123"] = agent
         adapter._run_streams["run_123"] = queue
         adapter._set_run_status("run_123", "running")
@@ -545,7 +547,7 @@ class TestSteerRun:
         }
         agent.steer.assert_called_once_with("tighten the ending")
         assert adapter._run_statuses["run_123"]["last_event"] == "run.steered"
-        event = queue.get_nowait()
+        event = queue.frames[-1].payload
         assert event["event"] == "run.steered"
         assert event["run_id"] == "run_123"
         assert event["accepted"] is True
@@ -715,7 +717,7 @@ class TestRunLifecycleSweep:
                 with approval_mod._lock:
                     approval_mod._gateway_queues[run_id] = [pending]
 
-                adapter._run_streams_created[run_id] -= adapter._RUN_STREAM_TTL + 1
+                adapter._run_streams_created[run_id] -= adapter._RUN_ACTIVE_STREAM_TTL + 1
                 # Exercise one real sweeper iteration without waiting 60 seconds.
                 with patch(
                     "gateway.platforms.api_server.asyncio.sleep",
@@ -2249,7 +2251,7 @@ class TestRunPaymentCredentials:
         _claim_run(adapter, run_id)
         adapter._set_run_status(run_id, "running")
         loop = asyncio.get_running_loop()
-        queue = adapter._run_streams[run_id] = asyncio.Queue()
+        queue = adapter._run_streams[run_id] = RunEventBuffer()
         launch = SimpleNamespace(run_id=run_id, queue=queue)
         notices = []
         from gateway.platforms.api_server_runs import _make_payment_notify
