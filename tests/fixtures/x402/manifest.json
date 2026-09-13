@@ -1,0 +1,18 @@
+{
+  "source": {
+    "mcp": "2.0.0",
+    "profile": "x402-v2-exact-testnet",
+    "upstream_base": "7f61ae589f262e163294ee69f61370cc6b322f0f"
+  },
+  "files": {
+    "payment-required.json": {
+      "sha256": "6c759563ecd44b3ad0c0038aca124c12e3fbc572c3da7fa7d4301b004e2ed972"
+    },
+    "payment-payload-exact.json": {
+      "sha256": "03a1f35cdf2ebf73b72062c3531c8645d913cb3cb553ba0a09704f8bcc6c35bc"
+    },
+    "settlement-response.json": {
+      "sha256": "aef523066d12132a9361647a73a96b9d42f198a6269ab315c9e2cc203f533eae"
+    }
+  }
+}

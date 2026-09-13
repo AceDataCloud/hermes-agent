@@ -102,6 +102,7 @@ def _create_runs_app(adapter: APIServerAdapter) -> web.Application:
     app.router.add_get("/v1/runs/{run_id}", adapter._handle_get_run)
     app.router.add_get("/v1/runs/{run_id}/events", adapter._handle_run_events)
     app.router.add_post("/v1/runs/{run_id}/approval", adapter._handle_run_approval)
+    app.router.add_post("/v1/runs/{run_id}/payment-credentials", adapter._handle_run_payment_credential)
     app.router.add_post("/v1/runs/{run_id}/steer", adapter._handle_steer_run)
     app.router.add_post("/v1/runs/{run_id}/stop", adapter._handle_stop_run)
     return app
@@ -2194,3 +2195,128 @@ class TestHostedRoomRuns:
                 )
             assert rejected.status == 403
             create.assert_not_called()
+
+
+class TestRunMcpRequestMeta:
+    @pytest.mark.asyncio
+    async def test_mcp_request_meta_is_rejected_when_payment_bridge_disabled(self, adapter):
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.post(
+                "/v1/runs", json={"input": "hello", "mcp_request_meta": {"agentworld/grant": "x"}}
+            )
+        assert response.status == 400
+
+    @pytest.mark.asyncio
+    async def test_mcp_request_meta_rejects_unknown_keys(self, adapter):
+        adapter._x402_payments_enabled = True
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.post(
+                "/v1/runs", json={"input": "hello", "mcp_request_meta": {"evil": "x"}}
+            )
+        assert response.status == 400
+
+
+class TestRunPaymentCredentials:
+    @pytest.mark.asyncio
+    async def test_payment_callback_is_hidden_when_disabled(self, adapter):
+        run_id = "run_" + "c" * 32
+        _claim_run(adapter, run_id)
+        adapter._set_run_status(run_id, "waiting_for_payment")
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.post(
+                f"/v1/runs/{run_id}/payment-credentials",
+                json={"tool_call_id": "x", "challenge_digest": "0" * 64, "payment_payload": {}},
+            )
+        assert response.status == 404
+
+    @pytest.mark.asyncio
+    async def test_payment_callback_resumes_exact_wait(self, adapter):
+        adapter._x402_payments_enabled = True
+        from tools.mcp_payment import (
+            await_payment_and_retry,
+            register_payment_notifier,
+            reset_payment_context,
+            set_payment_context,
+            unregister_payment_notifier,
+        )
+        from types import SimpleNamespace
+        import json
+
+        run_id = "run_" + "a" * 32
+        _claim_run(adapter, run_id)
+        adapter._set_run_status(run_id, "running")
+        loop = asyncio.get_running_loop()
+        queue = adapter._run_streams[run_id] = asyncio.Queue()
+        launch = SimpleNamespace(run_id=run_id, queue=queue)
+        notices = []
+        from gateway.platforms.api_server_runs import _make_payment_notify
+        notify = _make_payment_notify(adapter, launch, loop)
+        register_payment_notifier(run_id, lambda data: (notices.append(data), notify(data)))
+        token = set_payment_context(run_id, "call-1")
+        required = {
+            "x402Version": 2,
+            "resource": {"url": "mcp://song"},
+            "accepts": [{"scheme": "exact", "network": "eip155:84532", "amount": "1"}],
+        }
+        result = SimpleNamespace(
+            isError=True,
+            structuredContent=required,
+            content=[SimpleNamespace(text=json.dumps(required, separators=(",", ":")))],
+        )
+
+        async def retry(meta):
+            assert meta["x402/payment"]["x402Version"] == 2
+            return SimpleNamespace(isError=False, content=[SimpleNamespace(text="ok")])
+
+        try:
+            wait_task = asyncio.create_task(await_payment_and_retry(
+                result, server_name="paid", tool_name="song_generate", arguments={"p": "x"},
+                retry=retry, timeout=2,
+            ))
+            for _ in range(20):
+                if notices:
+                    break
+                await asyncio.sleep(0.01)
+            assert adapter._run_statuses[run_id]["status"] == "waiting_for_payment"
+            assert "call-1" in adapter._run_statuses[run_id]["payments"]
+            app = _create_runs_app(adapter)
+            async with TestClient(TestServer(app)) as cli:
+                response = await cli.post(
+                    f"/v1/runs/{run_id}/payment-credentials",
+                    json={
+                        "tool_call_id": "call-1",
+                        "challenge_digest": notices[0]["challenge_digest"],
+                        "payment_payload": {
+                            "x402Version": 2,
+                            "accepted": required["accepts"][0],
+                            "payload": {"signature": "test"},
+                        },
+                    },
+                )
+                assert response.status == 200
+                assert (await response.json())["state"] == "submitted"
+            assert (await wait_task).content[0].text == "ok"
+        finally:
+            reset_payment_context(token)
+            unregister_payment_notifier(run_id)
+
+    @pytest.mark.asyncio
+    async def test_payment_callback_rejects_changed_digest(self, adapter):
+        adapter._x402_payments_enabled = True
+        run_id = "run_" + "b" * 32
+        _claim_run(adapter, run_id)
+        adapter._set_run_status(run_id, "waiting_for_payment")
+        app = _create_runs_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.post(
+                f"/v1/runs/{run_id}/payment-credentials",
+                json={
+                    "tool_call_id": "missing",
+                    "challenge_digest": "0" * 64,
+                    "payment_payload": {"x402Version": 2},
+                },
+            )
+        assert response.status == 409

@@ -328,3 +328,12 @@ class TestDroppedBlockNotice:
             SimpleNamespace(), "mystery"
         )
         assert notice == "[MCP content dropped: unsupported block (type=mystery)]"
+
+
+
+def test_ordinary_mcp_call_omits_meta_keyword(_patch_mcp_server):
+    session = _patch_mcp_server
+    session.call_tool = AsyncMock(return_value=_FakeCallToolResult(content=[_FakeContentBlock("ok")]))
+    handler = _mcp_handlers._make_tool_handler("test-server", "my-tool", 30.0)
+    assert json.loads(handler({}))["result"] == "ok"
+    session.call_tool.assert_awaited_once_with("my-tool", arguments={})

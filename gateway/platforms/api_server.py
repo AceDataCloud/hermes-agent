@@ -1148,6 +1148,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         # @mssteuer.)
         self._direct_model_requests: bool = _coerce_request_bool(
             extra.get("direct_model_requests"), default=False)
+        x402_config = extra.get("x402_payments") if isinstance(extra.get("x402_payments"), dict) else {}
+        self._x402_payments_enabled: bool = _coerce_request_bool(
+            x402_config.get("enabled"), default=False
+        )
         self._app: Optional["web.Application"] = None
         self._runner: Optional["web.AppRunner"] = None
         self._site: Optional["web.TCPSite"] = None
@@ -3829,6 +3833,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     _handle_get_run = _run_route_delegate("_handle_get_run")
     _handle_run_events = _run_route_delegate("_handle_run_events")
     _handle_run_approval = _run_route_delegate("_handle_run_approval")
+    _handle_run_payment_credential = _run_route_delegate("_handle_run_payment_credential")
     _handle_steer_run = _run_route_delegate("_handle_steer_run")
     _handle_stop_run = _run_route_delegate("_handle_stop_run")
 

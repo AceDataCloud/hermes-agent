@@ -282,6 +282,10 @@ def _dispatch(server_name: str, server: Any, op: str, call, tool_timeout: float,
     except InterruptedError:
         return tool_error("MCP call interrupted: user sent a new message")
     except Exception as exc:
+        from tools.mcp_payment import PaymentRetryUncertain
+        if isinstance(exc, PaymentRetryUncertain):
+            on_final_failure(exc)
+            return tool_error("Paid MCP retry outcome is uncertain; automatic replay is disabled")
         for recover in recoverers:
             recovered = recover(server_name, exc, call_once, op)
             if recovered is not None:
@@ -317,7 +321,7 @@ async def _track_inflight_rpc(server: Any, server_name: str, op: str):
             inflight.discard(task)
 
 
-async def _call_tool_racing_stdio_death(server, server_name: str, tool_name: str, args: dict):
+async def _call_tool_racing_stdio_death(server, server_name: str, tool_name: str, args: dict, *, meta=None):
     """``session.call_tool`` that fails fast when the stdio child is/gets dead: pre-call (a dead
     child must not hold the slot for the full timeout) and mid-call (race against
     ``_watch_stdio_children``). Both raise :class:`_StdioChildExited` for the respawn path, which
@@ -331,7 +335,11 @@ async def _call_tool_racing_stdio_death(server, server_name: str, tool_name: str
             f"MCP stdio subprocess for '{server_name}' had already exited when the call was dispatched",
             in_flight=False,
         )
-    _call_coro = server.session.call_tool(tool_name, arguments=args)
+    _call_coro = (
+        server.session.call_tool(tool_name, arguments=args)
+        if meta is None
+        else server.session.call_tool(tool_name, arguments=args, meta=meta)
+    )
     _watch_children = getattr(server, "_watch_stdio_children", None)
     if not (inspect.iscoroutinefunction(_watch_children) and asyncio.iscoroutine(_call_coro)):
         # Stubbed sessions return a non-awaitable, or there is no child-watcher to race: plain await.
@@ -487,21 +495,59 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
             return error
 
         async def _call():
-            async with server._rpc_lock, _track_inflight_rpc(server, server_name, op):
-                server._pending_call_context = contextvars.copy_context()  # for the elicitation callback
-                try:
-                    result = await _call_tool_racing_stdio_death(server, server_name, tool_name, args)
-                finally:
-                    server._pending_call_context = None
-            if getattr(server, "_mark_session_proven", None) is not None:  # round-trip done: transport healthy
-                server._mark_session_proven()
-            return _render_call_tool_result(result, server_name)
+            from tools.mcp_payment import await_payment_and_retry, request_meta, reset_payment_context, set_payment_context
+            from tools.approval_context import get_current_session_key
+
+            payment_token = set_payment_context(
+                get_current_session_key(default=kwargs.get("session_id", "")),
+                kwargs.get("tool_call_id", ""),
+            )
+            try:
+                async with server._rpc_lock, _track_inflight_rpc(server, server_name, op):
+                    server._pending_call_context = contextvars.copy_context()  # for the elicitation callback
+                    try:
+                        result = await _call_tool_racing_stdio_death(
+                            server, server_name, tool_name, args, meta=request_meta()
+                        )
+                    finally:
+                        server._pending_call_context = None
+                if getattr(server, "_mark_session_proven", None) is not None:
+                    server._mark_session_proven()
+
+                async def _retry(meta):
+                    async with server._rpc_lock, _track_inflight_rpc(server, server_name, op):
+                        server._pending_call_context = contextvars.copy_context()
+                        try:
+                            return await _call_tool_racing_stdio_death(
+                                server, server_name, tool_name, args, meta=request_meta(meta)
+                            )
+                        finally:
+                            server._pending_call_context = None
+
+                result = await await_payment_and_retry(
+                    result,
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    arguments=args,
+                    retry=_retry,
+                    timeout=tool_timeout,
+                )
+                return _render_call_tool_result(result, server_name)
+            finally:
+                reset_payment_context(payment_token)
 
         def _on_failure(exc):
             _core._bump_server_error(server_name)
             logger.error("MCP tool %s/%s call failed: %s", server_name, tool_name, exc)
+        from tools.mcp_payment import payment_notifier_registered
+        from tools.approval_context import get_current_session_key
+
+        payment_enabled = payment_notifier_registered(
+            get_current_session_key(default=kwargs.get("session_id", ""))
+        )
+        dispatch_timeout = tool_timeout * 3 if payment_enabled else tool_timeout
         return _dispatch(
-            server_name, server, op, _call, tool_timeout,
+            server_name, server, op, _call, dispatch_timeout,
             (_handle_stdio_child_exited_and_retry, _handle_auth_error_and_retry, _handle_session_expired_and_retry),
             _on_failure, record_outcome=True)
     return _handler

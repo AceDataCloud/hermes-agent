@@ -105,6 +105,7 @@ def _http_routes(self) -> list[tuple[str, str, Any]]:
         ("POST", "/v1/runs", self._handle_runs), ("GET", "/v1/runs/{run_id}", self._handle_get_run),
         ("GET", "/v1/runs/{run_id}/events", self._handle_run_events),
         ("POST", "/v1/runs/{run_id}/approval", self._handle_run_approval),
+        ("POST", "/v1/runs/{run_id}/payment-credentials", self._handle_run_payment_credential),
         ("POST", "/v1/runs/{run_id}/steer", self._handle_steer_run),
         ("POST", "/v1/runs/{run_id}/stop", self._handle_stop_run)]
 
@@ -135,6 +136,8 @@ def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, 
     current.update(fields)
     if status != "waiting_for_approval":
         current.pop("approval", None)
+    if status != "waiting_for_payment":
+        current.pop("payments", None)
     self._run_statuses[run_id] = current
     should_persist = (
         status != previous_status
@@ -332,6 +335,7 @@ class _RunLaunch:
     browser_control_principal: Any
     browser_control_transport_family: Any
     turn_author: Optional[Dict[str, Any]] = None  # memory-attribution label only; grants nothing
+    mcp_request_meta: Optional[Dict[str, Any]] = None
 
     @property
     def approval_session_key(self) -> str:
@@ -392,6 +396,18 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
     body, room_error = await self._normalize_room_dispatch(request, body)
     if room_error is not None:
         return room_error
+    raw_mcp_meta = body.get("mcp_request_meta") if isinstance(body, dict) else None
+    mcp_request_meta = {}
+    if raw_mcp_meta is not None:
+        if (
+            not self._x402_payments_enabled
+            or not isinstance(raw_mcp_meta, dict)
+            or set(raw_mcp_meta) != {"agentworld/grant"}
+            or not isinstance(raw_mcp_meta.get("agentworld/grant"), str)
+            or not 1 <= len(raw_mcp_meta["agentworld/grant"]) <= 8192
+        ):
+            return _json_error(_openai_error, "mcp_request_meta is invalid", status=400)
+        mcp_request_meta = raw_mcp_meta
     room_dispatch, room_execution_policy = (
         v if isinstance(v, dict) else None for v in (
             (body.get("hosted_room_dispatch"), body.get("_room_execution_policy"))
@@ -498,7 +514,8 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
         request_profile=_api_server._api_request_profile.get(),
         browser_control_principal=_api_server._api_request_browser_control_principal.get(),
         browser_control_transport_family=_api_server._api_request_browser_control_transport_family.get(),
-        turn_author=turn_author)
+        turn_author=turn_author,
+        mcp_request_meta=mcp_request_meta)
     self._activate_admitted_request()
     task = self._active_run_tasks[run_id] = asyncio.create_task(_execute_run(self, launch, _api_server=_api_server))
     with suppress(TypeError):
@@ -508,7 +525,7 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
     return _accepted_response(run_id, "started", gateway_session_key, replayed=False)
 
 
-def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_server):
+def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, payment_notify, *, _api_server):
     """Executor-thread body of one run; returns ``(result, usage)``."""
     from gateway.session_context import clear_session_vars
     from gateway.hosted_room_execution_policy import (
@@ -521,6 +538,12 @@ def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_serve
     # accumulate until the OS refuses new process spawns.
     from tools.approval import register_gateway_notify, unregister_gateway_notify
     from tools.approval_context import reset_current_session_key, set_current_session_key
+    from tools.mcp_payment import (
+        register_payment_notifier,
+        reset_request_meta,
+        set_request_meta,
+        unregister_payment_notifier,
+    )
     session_id = run.session_id
     effective_task_id = session_id or run.run_id
     # (token, reset) pairs unwound in the finally block; bound only once each step succeeds.
@@ -552,6 +575,10 @@ def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_serve
                 policy = RoomExecutionPolicy.from_mapping(run.agent_kwargs["room_execution_policy"] or {})
                 resets.append((bind_room_execution_policy(policy), reset_room_execution_policy))
             register_gateway_notify(run.approval_session_key, approval_notify)
+            if payment_notify is not None:
+                register_payment_notifier(run.approval_session_key, payment_notify)
+            request_meta_token = set_request_meta(run.mcp_request_meta or {})
+            resets.append((request_meta_token, reset_request_meta))
             # /v1/runs owns its agent lifecycle (no TurnRunner): record process ownership
             # so stop/cancel reaps only the background processes this run created.
             _api_server._publish_turn_process_ownership(agent, effective_task_id)
@@ -568,12 +595,40 @@ def _run_agent_sync(self, run: _RunLaunch, agent, approval_notify, *, _api_serve
                 self._bind_declared_conversation(
                     getattr(agent, "session_id", None) or session_id, run.gateway_session_key)
             try:
+                from tools.mcp_payment import cancel_payment_waits
+                cancel_payment_waits(run.approval_session_key)
                 unregister_gateway_notify(run.approval_session_key)
+                unregister_payment_notifier(run.approval_session_key)
             finally:
                 for token, reset in resets:
                     with suppress(Exception):
                         reset(token)
         return r, {key: getattr(agent, attr, 0) or 0 for key, attr in _USAGE_FIELDS}
+
+
+def _make_payment_notify(self, run: _RunLaunch, loop: "asyncio.AbstractEventLoop") -> Callable[[Dict[str, Any]], None]:
+    """Publish credential-free x402 challenges on the API event-loop thread."""
+    run_id, q = run.run_id, run.queue
+
+    def _publish(payment_data: Dict[str, Any]) -> None:
+        current = self._run_statuses.get(run_id, {})
+        if current.get("status") in TERMINAL_STATUSES or run_id in self._stopping_run_ids:
+            return
+        event = _run_event(run_id, "payment.required", **dict(payment_data or {}))
+        payments = dict(current.get("payments") or {})
+        payments[event["tool_call_id"]] = {key: event[key] for key in (
+            "tool_call_id", "server_name", "tool_name", "arguments_digest",
+            "challenge_digest", "payment_required",
+        )}
+        self._set_run_status(
+            run_id, "waiting_for_payment", last_event="payment.required", payments=payments
+        )
+        q.put_nowait(event)
+
+    def _payment_notify(payment_data: Dict[str, Any]) -> None:
+        loop.call_soon_threadsafe(_publish, dict(payment_data or {}))
+
+    return _payment_notify
 
 
 def _make_approval_notify(self, run: _RunLaunch, *, _api_server) -> Callable[[Dict[str, Any]], None]:
@@ -629,8 +684,11 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
                 **run.agent_kwargs)
         self._active_run_agents[run_id] = agent
         approval_notify = _make_approval_notify(self, run, _api_server=_api_server)
+        payment_notify = _make_payment_notify(self, run, loop) if self._x402_payments_enabled else None
         result, usage = await loop.run_in_executor(
-            None, lambda: _run_agent_sync(self, run, agent, approval_notify, _api_server=_api_server))
+            None, lambda: _run_agent_sync(
+                self, run, agent, approval_notify, payment_notify, _api_server=_api_server
+            ))
         if not isinstance(result, dict):
             result = {}
         if run_id in self._stopping_run_ids and result.get("interrupted") is True:
@@ -771,6 +829,49 @@ def _mark_run_event(self, run_id: str, name: str, **fields: Any) -> None:
             q.put_nowait(_run_event(run_id, name, **fields))
 
 
+async def _handle_run_payment_credential(self, request: "web.Request", *, _api_server) -> "web.Response":
+    """Submit one x402 PaymentPayload to an exact pending MCP tool call."""
+    _openai_error = _api_server._openai_error
+    if not self._x402_payments_enabled:
+        return _run_not_found(_openai_error, request.match_info["run_id"])
+    run_id, status, _, _, err = _load_owned_run(
+        self, request, _api_server=_api_server, permission=None, active_fallback=False
+    )
+    if err is not None:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error(_openai_error, "Invalid JSON", status=400)
+    tool_call_id = str(body.get("tool_call_id") or "")
+    challenge_digest = str(body.get("challenge_digest") or "")
+    payment_payload = body.get("payment_payload")
+    if not tool_call_id or len(tool_call_id) > 255 or len(challenge_digest) != 64:
+        return _json_error(_openai_error, "Payment wait identity is invalid", status=400)
+    try:
+        from tools.mcp_payment import submit_payment
+        state, changed = submit_payment(run_id, tool_call_id, challenge_digest, payment_payload)
+    except KeyError:
+        return _json_error(_openai_error, "Payment wait not found", code="payment_not_pending", status=409)
+    except (RuntimeError, ValueError) as exc:
+        return _json_error(_openai_error, str(exc), code="payment_conflict", status=409)
+    if changed:
+        current = self._run_statuses.get(run_id, {})
+        payments = dict(current.get("payments") or {})
+        payments.pop(tool_call_id, None)
+        next_status = "waiting_for_payment" if payments else "running"
+        self._set_run_status(run_id, next_status, last_event="payment.responded", payments=payments)
+        q = self._run_streams.get(run_id)
+        if q is not None:
+            q.put_nowait(_run_event(run_id, "payment.responded", tool_call_id=tool_call_id, state=state))
+    return web.json_response({
+        "object": "hermes.run.payment_response",
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "state": state,
+    })
+
+
 _APPROVAL_CHOICE_ALIASES = {"approve": "once", "approved": "once", "allow": "once"}
 
 
@@ -872,6 +973,8 @@ async def _handle_stop_run(self, request: "web.Request", *, _api_server) -> "web
         return _json_error(
             _openai_error, f"Run is not active in this gateway process: {run_id}",
             code="run_not_active", status=409)
+    from tools.mcp_payment import cancel_payment_waits
+    cancel_payment_waits(run_id)
     self._set_run_status(run_id, "stopping", last_event="run.stopping")
     self._stopping_run_ids.add(run_id)
     if agent is not None:
