@@ -697,9 +697,17 @@ gateway:
     cors_origins: http://localhost:3000
     model_name: my-hermes
     max_concurrent_runs: 10   # concurrent-run cap; 0 disables the limit
+    x402_payments:
+      enabled: false          # experimental MCP challenge/resume; mock/testnet only
 ```
 
 `port`, `key`, `host`, `cors_origins`, and `model_name` are automatically bridged into the platform's `extra` settings, so they behave exactly like their `API_SERVER_*` environment-variable counterparts. Environment variables take precedence over `config.yaml` values. The block is also accepted under `gateway.platforms.api_server:` or a top-level `platforms.api_server:` section.
+
+### Experimental MCP payment challenge/resume
+
+`gateway.api_server.x402_payments.enabled` is off by default. `HERMES_X402_PAYMENTS_ENABLED` can explicitly override it for managed deployments. When enabled, `/v1/runs` can pause on a strict x402 V2 MCP `PaymentRequired` Tool Result, emit a credential-free `payment.required` event, and accept the matching `PaymentPayload` at `POST /v1/runs/{run_id}/payment-credentials`. The callback uses the API server bearer authentication and retries only the original Tool name and arguments; credentials never enter model-visible messages or SSE.
+
+This surface is for mock/testnet interoperability. Hermes does not verify or settle funds, and enabling it does not make an MCP server or media workflow safe for real-money use.
 
 ### Concurrent-run cap
 

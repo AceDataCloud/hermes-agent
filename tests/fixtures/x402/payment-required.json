@@ -1,0 +1,19 @@
+{
+  "x402Version": 2,
+  "resource": {
+    "url": "mcp://agentworld/song_generate",
+    "description": "Create a test song task",
+    "mimeType": "application/json"
+  },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "eip155:84532",
+      "amount": "10000",
+      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "payTo": "0x1111111111111111111111111111111111111111",
+      "maxTimeoutSeconds": 300,
+      "extra": {"name": "USDC", "version": "2"}
+    }
+  ]
+}

@@ -15,6 +15,7 @@ _HTTP_HANDLER_DELEGATES = (
     ("_handle_get_run", "_handle_get_run"),
     ("_handle_run_events", "_handle_run_events"),
     ("_handle_run_approval", "_handle_run_approval"),
+    ("_handle_run_payment_credential", "_handle_run_payment_credential"),
     ("_handle_steer_run", "_handle_steer_run"),
     ("_handle_stop_run", "_handle_stop_run"),
 )
@@ -175,6 +176,7 @@ def test_roomlink_and_run_route_tuples_are_shard_owned():
         ("GET", "/v1/runs/{run_id}"),
         ("GET", "/v1/runs/{run_id}/events"),
         ("POST", "/v1/runs/{run_id}/approval"),
+        ("POST", "/v1/runs/{run_id}/payment-credentials"),
         ("POST", "/v1/runs/{run_id}/steer"),
         ("POST", "/v1/runs/{run_id}/stop"),
     ]
