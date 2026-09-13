@@ -25,7 +25,7 @@ from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import gateway_trust_env, BasePlatformAdapter, SendResult
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.platforms.helpers import redact_phone, strip_markdown
-from gateway.platforms._shared import get_scoped_secret as _get_scoped_secret
+from gateway.platforms._shared import env_is_connected as _env_is_connected, get_scoped_secret as _get_scoped_secret
 
 try:
     import aiohttp
@@ -331,10 +331,8 @@ def _redacted_error(text: str) -> dict:
         return {"error": text}
 
 
-def _is_connected(config) -> bool:
-    """SMS is connected when Twilio credentials are present (bool(TWILIO_ACCOUNT_SID))."""
-    import hermes_cli.gateway as gateway_mod
-    return bool((gateway_mod.get_env_value("TWILIO_ACCOUNT_SID") or "").strip())
+_is_connected = _env_is_connected("TWILIO_ACCOUNT_SID")
+
 
 
 def register(ctx) -> None:
