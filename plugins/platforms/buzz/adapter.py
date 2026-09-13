@@ -193,6 +193,7 @@ logger = logging.getLogger(__name__)
 from gateway.platforms.base import (
     BasePlatformAdapter, CachedMedia, SendResult, cache_media_bytes_async,
 )
+from gateway.platforms.helpers import cancel_task
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.config import Platform
 
@@ -834,21 +835,12 @@ class BuzzAdapter(BasePlatformAdapter):
             except Exception:
                 pass
             self._lock_key = None
-        await self._cancel_task(self._ws_task)
+        await cancel_task(self._ws_task)
         self._ws_task = None
-        await self._cancel_task(self._poll_task)
+        await cancel_task(self._poll_task)
         self._poll_task = None
         self._channel_state = {}
         self._poll_count = 0
-
-    @staticmethod
-    async def _cancel_task(task: Optional[asyncio.Task]) -> None:
-        if task and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
 
     # ── Sending ───────────────────────────────────────────────────────────
 
@@ -1130,7 +1122,7 @@ class BuzzAdapter(BasePlatformAdapter):
             return True
         except (asyncio.TimeoutError, TimeoutError):
             logger.warning("Buzz: WebSocket did not authenticate in time")
-            await self._cancel_task(self._ws_task)
+            await cancel_task(self._ws_task)
             self._ws_task = None
             return False
 
