@@ -2,8 +2,14 @@ name: AceDataCloud Container
 
 on:
   pull_request:
+    paths:
+      - .github/workflows/acedatacloud-container.yml
+      - tests/test_acedatacloud_container_workflow.py
   push:
     branches: [main]
+    paths:
+      - .github/workflows/acedatacloud-container.yml
+      - tests/test_acedatacloud_container_workflow.py
   workflow_dispatch:
 
 permissions:
@@ -16,13 +22,18 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/acedatacloud/hermes-agent
+  SOURCE_SHA: 38b8f3a3b10df7a33753f0b402593c37e0019f32
+  IMAGE_TAG: 38b8f3a3b10df7a33753f0b402593c37e0019f32-multiarch.1
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -31,15 +42,27 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Reject an existing immutable tag
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          output=$(docker buildx imagetools inspect "$IMAGE_NAME:$IMAGE_TAG" 2>&1) && {
+            echo "Refusing to overwrite immutable image tag $IMAGE_NAME:$IMAGE_TAG" >&2
+            exit 1
+          }
+          if ! grep -Eqi 'manifest unknown|not found' <<<"$output"; then
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
       - name: Build and optionally publish
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          labels: org.opencontainers.image.revision=${{ github.sha }}
-          build-args: HERMES_GIT_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=acedatacloud-amd64
-          cache-to: type=gha,mode=max,scope=acedatacloud-amd64
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          labels: org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+          build-args: HERMES_GIT_SHA=${{ env.SOURCE_SHA }}
+          cache-from: type=gha,scope=acedatacloud-multiarch
+          cache-to: type=gha,mode=max,scope=acedatacloud-multiarch
