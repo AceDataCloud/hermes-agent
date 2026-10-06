@@ -1,7 +1,8 @@
 name: acedatacloud
 title: Ace Data Cloud
 repo: https://github.com/AceDataCloud/hermes-acedatacloud-provider
-sha: 9b18d4af9cac89b9482d5da1d51567db08e7e1b6
+sha: 39445f579d20228e93c892b6200f2c8a5bfc9442
+image: https://raw.githubusercontent.com/AceDataCloud/hermes-acedatacloud-provider/39445f579d20228e93c892b6200f2c8a5bfc9442/assets/catalog.png
 description: Ace Data Cloud GPT models with streaming and tool calling.
 maintainer: AceDataCloud
 tier: community
