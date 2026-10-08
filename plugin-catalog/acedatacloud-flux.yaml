@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-flux",
+  "repo": "https://github.com/AceDataCloud/FluxHermes",
+  "sha": "c353ca4dc6426a982c91156fef21901211058129",
+  "title": "Ace Data Cloud Flux",
+  "description": "FLUX Dev text-to-image generation through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/FluxHermes/c353ca4dc6426a982c91156fef21901211058129/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_flux_generate",
+      "acedata_flux_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
