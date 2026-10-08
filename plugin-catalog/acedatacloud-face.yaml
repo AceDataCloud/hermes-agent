@@ -1,0 +1,24 @@
+{
+  "name": "acedatacloud-face",
+  "repo": "https://github.com/AceDataCloud/FaceHermes",
+  "sha": "df31b44e272b1f58f052c7aebe8b967a04e08fef",
+  "title": "Ace Data Cloud Face Transform",
+  "description": "Face landmark analysis from an HTTPS image through your Ace Data Cloud account. Paid HTTPS requests to api.acedata.cloud with your Ace key.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/FaceHermes/df31b44e272b1f58f052c7aebe8b967a04e08fef/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_face_analyze"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
