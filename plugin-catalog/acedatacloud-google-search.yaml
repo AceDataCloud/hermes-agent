@@ -1,0 +1,24 @@
+{
+  "name": "acedatacloud-google-search",
+  "repo": "https://github.com/AceDataCloud/GoogleSearchHermes",
+  "sha": "017369a11b55644d6027809385f384d0b8d9662a",
+  "title": "Ace Data Cloud Google Search",
+  "description": "Google web and news search with links and snippets through your Ace Data Cloud account. Paid HTTPS requests to api.acedata.cloud with your Ace key.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "web",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/GoogleSearchHermes/017369a11b55644d6027809385f384d0b8d9662a/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_google_search_search"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
