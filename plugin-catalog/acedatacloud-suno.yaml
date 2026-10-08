@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-suno",
+  "repo": "https://github.com/AceDataCloud/SunoHermes",
+  "sha": "ddd2087469d7458ccdda44300d0a31129e79a848",
+  "title": "Ace Data Cloud Suno",
+  "description": "Music generation with prompts or custom lyrics through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "voice",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/SunoHermes/ddd2087469d7458ccdda44300d0a31129e79a848/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_suno_generate",
+      "acedata_suno_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
