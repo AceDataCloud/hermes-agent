@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-wan",
+  "repo": "https://github.com/AceDataCloud/WanHermes",
+  "sha": "2d0aa4173cca5a557fe1204e813fd78900188a52",
+  "title": "Ace Data Cloud Wan",
+  "description": "Wan 2.6 text-to-video generation through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/WanHermes/2d0aa4173cca5a557fe1204e813fd78900188a52/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_wan_generate",
+      "acedata_wan_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
