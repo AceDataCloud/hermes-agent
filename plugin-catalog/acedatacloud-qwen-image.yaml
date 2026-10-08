@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-qwen-image",
+  "repo": "https://github.com/AceDataCloud/QwenImageHermes",
+  "sha": "75f7298f06d72cadbcdff6315e93c889c9213564",
+  "title": "Ace Data Cloud Qwen Image",
+  "description": "Qwen Image 3.0 text-to-image generation through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/QwenImageHermes/75f7298f06d72cadbcdff6315e93c889c9213564/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_qwen_image_generate",
+      "acedata_qwen_image_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
