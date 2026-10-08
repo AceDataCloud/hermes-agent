@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-veo",
+  "repo": "https://github.com/AceDataCloud/VeoHermes",
+  "sha": "c8b8c9e490b171e9245a7809342f25f2f8564c7d",
+  "title": "Ace Data Cloud Veo",
+  "description": "Veo 3.1 Fast text-to-video and image-to-video through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/VeoHermes/c8b8c9e490b171e9245a7809342f25f2f8564c7d/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_veo_generate",
+      "acedata_veo_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
