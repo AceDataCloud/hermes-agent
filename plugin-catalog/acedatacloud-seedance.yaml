@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-seedance",
+  "repo": "https://github.com/AceDataCloud/SeedanceHermes",
+  "sha": "d994b10894533445ced7e1b8a54d5702fe3656fe",
+  "title": "Ace Data Cloud Seedance",
+  "description": "Seedance 2.0 Mini text-to-video and first-frame animation through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/SeedanceHermes/d994b10894533445ced7e1b8a54d5702fe3656fe/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_seedance_generate",
+      "acedata_seedance_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
