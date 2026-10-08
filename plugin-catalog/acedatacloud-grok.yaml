@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-grok",
+  "repo": "https://github.com/AceDataCloud/GrokHermes",
+  "sha": "b8f55a6b5704937ca72ef77e41461db98de65f39",
+  "title": "Ace Data Cloud Grok Video",
+  "description": "Grok Imagine fast text-to-video generation through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/GrokHermes/b8f55a6b5704937ca72ef77e41461db98de65f39/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_grok_generate",
+      "acedata_grok_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
