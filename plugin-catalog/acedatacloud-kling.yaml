@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-kling",
+  "repo": "https://github.com/AceDataCloud/KlingHermes",
+  "sha": "f94d688329f6f0de970e6528cd0ce8361171dee9",
+  "title": "Ace Data Cloud Kling",
+  "description": "Kling 3 Turbo text-to-video generation through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/KlingHermes/f94d688329f6f0de970e6528cd0ce8361171dee9/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_kling_generate",
+      "acedata_kling_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
