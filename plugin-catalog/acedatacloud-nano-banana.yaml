@@ -1,0 +1,25 @@
+{
+  "name": "acedatacloud-nano-banana",
+  "repo": "https://github.com/AceDataCloud/NanoBananaHermes",
+  "sha": "bb33202aefbc7aa750a52f6ef042ed0d3ca9ddd8",
+  "title": "Ace Data Cloud Nano Banana",
+  "description": "Image generation and HTTPS reference-image editing through your Ace Data Cloud account. Paid requests to api.acedata.cloud with your Ace key; task recovery does not resubmit generation.",
+  "maintainer": "AceDataCloud",
+  "tier": "community",
+  "category": "tools",
+  "requires_hermes": ">=0.21.6",
+  "version": "1.0.0",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/NanoBananaHermes/bb33202aefbc7aa750a52f6ef042ed0d3ca9ddd8/assets/catalog.png",
+  "readme": true,
+  "capabilities": {
+    "provides_tools": [
+      "acedata_nano_banana_generate",
+      "acedata_nano_banana_task"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+      "ACEDATACLOUD_API_KEY"
+    ]
+  }
+}
