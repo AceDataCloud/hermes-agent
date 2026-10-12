@@ -2,14 +2,14 @@
   "name": "acedatacloud-media",
   "title": "Ace Data Cloud Media",
   "repo": "https://github.com/AceDataCloud/AceDataCloudMediaHermes",
-  "sha": "3cc603dadcdf6e652d641ca95fd7e552e30e3521",
+  "sha": "eee9a15244643cd56b82f4002c80ffe09a9142e2",
   "description": "17 Ace Data Cloud service toolsets and a Nano Banana image_generate backend. Each generate call spends Ace Data Cloud credits on your ACEDATACLOUD_API_KEY with no Hermes approval prompt; the model can choose costly options (pro models, 4K, up to 4 images), and prompts and reference URLs go to api.acedata.cloud. Google Search and face analysis also spend Credits.",
   "maintainer": "AceDataCloud",
   "tier": "community",
   "category": "tools",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "requires_hermes": ">=0.21.6",
-  "image": "https://raw.githubusercontent.com/AceDataCloud/AceDataCloudMediaHermes/3cc603dadcdf6e652d641ca95fd7e552e30e3521/assets/catalog.png",
+  "image": "https://raw.githubusercontent.com/AceDataCloud/AceDataCloudMediaHermes/eee9a15244643cd56b82f4002c80ffe09a9142e2/assets/catalog.png",
   "readme": true,
   "capabilities": {
     "provides_tools": [
